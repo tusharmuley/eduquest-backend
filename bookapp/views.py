@@ -12,57 +12,79 @@ from .utils.qdrant_client import create_collection_if_needed, upsert_chunks, sea
 from .utils.llm_client import generate_answer
 import time
 import logging
+from .utils.structured_loader import store_structured_data_to_postgres
+import os
+import pandas as pd
+from .utils.structured_query import query_structured_data
+import traceback
+import sys
 
 
-class UploadBookView(APIView):
+class UploadUniversalBookView(APIView):
     parser_classes = [MultiPartParser]
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        start = time.time()
-        title = request.data.get("title")
-        subject = request.data.get("subject")
         file = request.data.get("file")
+        title = request.data.get("title")
+        subject = request.data.get("subject")  
 
-        print("📥 Started book upload")
+        if not file or not title:
+            return Response({"error": "File and title are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        book = Book.objects.create(title=title, subject=subject, file=file)
+        extension = os.path.splitext(file.name)[1].lower()
 
-        # Step 1: Extract text
-        t1 = time.time()
-        full_text = extract_text_from_pdf(book.file.path)
+        if extension in [".pdf"]:
+            book_type = "text"
+        elif extension in [".csv", ".xlsx"]:
+            book_type = "structured"
+        else:
+            return Response({"error": "Unsupported file type."}, status=400)
 
-        # Step 2: Save OCR text to file for review/debug
-        text_dump_path = f"ocr_output_book_{book.id}.txt"
-        with open(text_dump_path, "w", encoding="utf-8") as f:
-            f.write(full_text)
-        print(f"📝 Extracted text saved to {text_dump_path}")
-        print(f"📄 PDF extracted in {time.time() - t1:.2f} seconds")
+        book = Book.objects.create(title=title, subject=subject, file=file, type=book_type)
 
-        # Step 3: Chunk
-        t2 = time.time()
-        chunks = split_text(full_text)
-        print(f"✂️ Text split into {len(chunks)} chunks in {time.time() - t2:.2f} seconds")
+        if book_type == "text":
+            text = extract_text_from_pdf(book.file.path)
+            # Step 2: Save OCR text to file for review/debug
+            text_dump_path = f"ocr_output_book_{book.id}.txt"
+            with open(text_dump_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"📝 Extracted text saved to {text_dump_path}")
+            
+            chunks = split_text(text)
+            vectors = get_embeddings(chunks)
+            create_collection_if_needed()
+            upsert_chunks(chunks, vectors, book_id=book.id)
 
-        # Step 4: Embed
-        t3 = time.time()
-        vectors = get_embeddings(chunks)
-        print(f"🧠 Embeddings generated in {time.time() - t3:.2f} seconds")
+            return Response({
+                "message": "PDF processed and embedded.",
+                "book_id": book.id,
+                "type": "text",
+                "chunks": len(chunks)
+            })
 
-        # Step 5: Upsert to Qdrant
-        t4 = time.time()
-        print("📤 Uploading vectors to Qdrant...")
-        create_collection_if_needed()
-        upsert_chunks(chunks, vectors, book_id=book.id)
-        print(f"✅ Qdrant upserted in {time.time() - t4:.2f} seconds")
-
-        print(f"✅✅ Total upload process time: {time.time() - start:.2f} seconds")
-
-        return Response({
-            "message": "Book uploaded and embedded into Qdrant.",
-            "book_id": book.id,
-            "chunks_stored": len(chunks)
-        })
+        elif book_type == "structured":
+            try:
+                if extension == ".csv":
+                    df = pd.read_csv(book.file.path)
+                    store_structured_data_to_postgres(df, book.id, "Sheet1")
+                    return Response({
+                        "message": "CSV parsed and stored.",
+                        "book_id": book.id,
+                        "rows": len(df),
+                        "sheets": ["Sheet1"]
+                    })
+                else:
+                    dfs = pd.read_excel(book.file.path, sheet_name=None)
+                    for sheet_name, df in dfs.items():
+                        store_structured_data_to_postgres(df, book.id, sheet_name)
+                    return Response({
+                        "message": "Excel sheets parsed.",
+                        "book_id": book.id,
+                        "sheets": list(dfs.keys())
+                    })
+            except Exception as e:
+                return Response({"error": str(e)}, status=500)  
     
 
     def get(self, request):
@@ -181,12 +203,33 @@ class SearchInBookView(APIView):
         prompt = request.data.get("prompt", "").strip()
         book_id = request.data.get("book_id")
 
+
         if not prompt or not book_id:
             return Response({"error": "Prompt and book_id are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # 1. Classify prompt intent
             intents = classify_prompt_intents(prompt)
+
+            book = Book.objects.get(id=book_id)
+            book_type = book.type
+
+            if book_type == "structured":
+                # Only run this if intent is "numerical" or "qa"
+                if "numerical" in intents or "qa" in intents:
+                    structured_answer = query_structured_data(book_id, prompt)
+                    return Response({
+                        "answer": structured_answer,
+                        "confidence": "medium",
+                        "matched_chunks": []
+                    })
+                else:
+                    return Response({
+                        "answer": "Currently we only support numerical/QA queries for structured data.",
+                        "confidence": "low",
+            """_summary_
+            """                        "matched_chunks": []
+                    })
 
             # 2. Greet-only shortcut
             if "greet" in intents:
@@ -228,4 +271,19 @@ class SearchInBookView(APIView):
             })
 
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)     
+            # return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)    
+            exc_type, exc_obj, tb = sys.exc_info()
+            fname = tb.tb_frame.f_code.co_filename
+            line_no = tb.tb_lineno
+            # print("❌ Exception:", str(e))
+            # print("📄 File:", fname)
+            # print("📍 Line:", line_no)
+            # print("🧵 Traceback:")
+            traceback.print_exc()
+
+            return Response({
+                "error": str(e),
+                # "file": fname,
+                "line": line_no
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
+        

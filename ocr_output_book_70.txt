@@ -1,0 +1,29 @@
+Ecosystem:
+Forums:
+A community for all student members of INSP to interact with each other, through problems
+and solutions
+Students can post problems with parameters including chapters, topics, difficulty level, and
+type of problem.
+The solution percentage will be displayed on the problem summary and a solution of the
+problem will be provided to the students on attempting to solve the problem.
+Students can use the forum to test their skills in solving problems that are created and added
+on an everyday basis.
+Concepts of Physics:
+● Study material compiled by Nitin Sir and our faculty specifically targeted for
+competitive exams
+● Includes the complete syllabus for JEE Mains and Adv preparation
+● Students get full access to these Concepts of Physics Books on a premium
+subscription
+● This study material will include solutions for all problems and concepts being
+conducted in classes
+Practice Papers:
+● Students can create their own customized practice papers for everyday practice
+● Premium subscription grants students access to over 22,000 problems, to choose
+from to create their practice papers
+● These problems have various difficulty levels and the students can choose the
+difficulty level of the practice paper as they need
+● The problems are curated for JEE Mains and Adv preparations
+Leaderboards:
+● A ranking system for our top performers to showcase their progress and motivate our
+students in their preparations for the exams
+Packages:
