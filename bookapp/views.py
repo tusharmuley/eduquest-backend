@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import JsonResponse
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from .models import Book
+from .models import Book, ChatHistory
 from .utils.pdf_parser import extract_text_from_pdf, extract_text_from_docx
 from .utils.website_parser import extract_text_from_website
 from .utils.text_splitter import split_text
@@ -235,74 +235,112 @@ def build_final_prompt(intents: list, context: str, user_prompt: str) -> str:
     base += f"\nContext:\n{context}\n\nUser question: {user_prompt}\n\nAnswer:"
     return base
 
-# 🚀 Main RAG View with Hybrid Reranking
+
+def build_conversational_prompt(history: list, user_prompt: str, intents: list, context: str) -> str:
+    base = "You are a helpful assistant.\n\n"
+
+    if "greet" in intents:
+        base += "User greeted you. Just respond politely.\n"
+    elif "summary" in intents:
+        base += "Summarize the content below.\n"
+    elif "translate" in intents:
+        base += "Translate the content below into Hindi or Marathi.\n"
+    elif "mcq" in intents:
+        base += "Create 10 MCQs from the content.\n"
+    elif "numerical" in intents:
+        base += "Explain numerical or percentage-related info.\n"
+    elif "definition" in intents:
+        base += "Define the term or concept from the content.\n"
+    elif "book_meta" in intents:
+        base += "Answer metadata-related questions using context below.\n"
+    else:
+        base += "Answer using only the given context.\n"
+
+    # Add memory history
+    for msg in history[-5:]:  # Last 5 turns
+        role = msg["role"].capitalize()
+        base += f"{role}: {msg['text']}\n"
+
+    base += f"User: {user_prompt}\n\nContext:\n{context}\n\nAnswer:"
+    return base
+
+
 class SearchInBookView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         prompt = request.data.get("prompt", "").strip()
         book_id = request.data.get("book_id")
-
+        user = request.user
 
         if not prompt or not book_id:
             return Response({"error": "Prompt and book_id are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            # 1. Classify prompt intent
             intents = classify_prompt_intents(prompt)
-
             book = Book.objects.get(id=book_id)
-            book_type = book.type
 
-            if book_type == "structured":
-                # Only run this if intent is "numerical" or "qa"
+            # 🧠 Structured data flow
+            if book.type == "structured":
                 if "numerical" in intents or "qa" in intents:
-                    structured_answer = query_structured_data(book_id, prompt)
+                    result = query_structured_data(book_id, prompt)
                     return Response({
-                        "answer": structured_answer,
+                        "answer": result,
                         "confidence": "medium",
                         "matched_chunks": []
                     })
                 else:
                     return Response({
-                        "answer": "Currently we only support numerical/QA queries for structured data.",
+                        "answer": "Only numerical/QA supported for structured data.",
                         "confidence": "low",
-            """_summary_
-            """                        "matched_chunks": []
+                        "matched_chunks": []
                     })
 
-            # 2. Greet-only shortcut
+            # ✋ Greet shortcut
             if "greet" in intents:
-                final_prompt = build_final_prompt(intents, "", prompt)
-                answer = generate_answer(final_prompt)
+                answer = generate_answer(f"User: {prompt}\nAI:")
                 return Response({
                     "answer": answer,
                     "confidence": "high",
                     "matched_chunks": []
                 })
 
-            # 3. Embed and semantic search (top 10 for reranking)
+            # 📜 Fetch memory
+            chat_history, _ = ChatHistory.objects.get_or_create(user=user, book=book)
+            memory = chat_history.messages
+
+            # 🔍 Vector search
             vector = get_embeddings([prompt])[0]
             results = search_in_book(prompt_vector=vector, book_id=int(book_id), top_k=10)
-            all_chunks = [hit.payload["text"] for hit in results]
+            chunks = [hit.payload["text"] for hit in results]
 
-            # 4. Rerank chunks if not summary/translate/mcq/book_meta
-            if "book_meta" in intents or any(i in intents for i in ["summary", "translate", "mcq"]):
-                matched_chunks = all_chunks[:5]
-            else:
-                matched_chunks = rerank_chunks_by_llm(prompt, all_chunks, top_n=5)
+            if not chunks:
+                return Response({
+                    "answer": "No chunks found in the document.",
+                    "confidence": "low",
+                    "matched_chunks": []
+                })
 
-                if not matched_chunks:
-                    return Response({
-                        "answer": "Sorry, the answer is not available in the provided document.",
-                        "confidence": "low",
-                        "matched_chunks": []
-                    })
+            # 🔁 Rerank
+            matched_chunks = chunks[:5] if any(i in intents for i in ["summary", "translate", "mcq", "book_meta"]) else rerank_chunks_by_llm(prompt, chunks)
 
-            # 5. Final LLM prompt and response
+            if not matched_chunks:
+                return Response({
+                    "answer": "No relevant answer found.",
+                    "confidence": "low",
+                    "matched_chunks": []
+                })
+
+            # 🧠 Final LLM prompt
             context = "\n\n".join(matched_chunks)
-            final_prompt = build_final_prompt(intents, context, prompt)
+            final_prompt = build_conversational_prompt(memory, prompt, intents, context)
             answer = generate_answer(final_prompt)
+
+            # 💾 Update memory
+            memory.append({"role": "user", "text": prompt})
+            memory.append({"role": "ai", "text": answer})
+            chat_history.messages = memory[-10:]  # Limit to last 10
+            chat_history.save()
 
             return Response({
                 "answer": answer,
@@ -311,19 +349,38 @@ class SearchInBookView(APIView):
             })
 
         except Exception as e:
-            # return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)    
             exc_type, exc_obj, tb = sys.exc_info()
-            fname = tb.tb_frame.f_code.co_filename
-            line_no = tb.tb_lineno
-            # print("❌ Exception:", str(e))
-            # print("📄 File:", fname)
-            # print("📍 Line:", line_no)
-            # print("🧵 Traceback:")
             traceback.print_exc()
-
             return Response({
                 "error": str(e),
-                # "file": fname,
-                "line": line_no
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
+                "line": tb.tb_lineno
+            }, status=500)    
         
+        
+        
+
+# @api_view(["POST"])
+# @permission_classes([IsAuthenticated])
+# def clear_chat_history(request):
+#     book_id = request.data.get("book_id")
+#     ChatHistory.objects.filter(user=request.user, book_id=book_id).delete()
+#     return Response({"message": "Chat history cleared."})
+
+
+class ChatHistoryView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, book_id):
+        try:
+            chat, _ = ChatHistory.objects.get_or_create(user=request.user, book_id=book_id)
+            return Response({"messages": chat.messages})
+        except Exception as e:
+            return Response({"error": str(e)}, status=500)
+        
+    
+    def delete(self, request, book_id):
+            try:
+                ChatHistory.objects.filter(user=request.user, book_id=book_id).delete()
+                return Response({"message": "Chat history cleared."})
+            except Exception as e:
+                return Response({"error": str(e)}, status=500)

@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.models import User
 
 # models.py
 class Book(models.Model):
@@ -29,3 +30,12 @@ class BookStructuredData(models.Model):
 
     def __str__(self):
         return f"{self.book.title} | Row {self.row_index} | {self.column_name}"
+
+
+
+
+class ChatHistory(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    book = models.ForeignKey(Book, on_delete=models.CASCADE)
+    messages = models.JSONField(default=list)  # [{ "role": "user", "text": "..." }, ...]
+    updated_at = models.DateTimeField(auto_now=True)
