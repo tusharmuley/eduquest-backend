@@ -4,11 +4,13 @@ from django.db import models
 class Book(models.Model):
     BOOK_TYPE_CHOICES = [
         ('text', 'Text'),
-        ('structured', 'Structured')
+        ('structured', 'Structured'),
+        ('website', 'Website'),  # ✅ Added website type
     ]
 
     title = models.CharField(max_length=200)
     subject = models.CharField(max_length=100 , null=True, blank=True)  # ✅ Added subject field
+    website_url = models.URLField(blank=True, null=True)
     uploaded_at = models.DateTimeField(auto_now_add=True)
     file = models.FileField(upload_to='books/')
     type = models.CharField(max_length=20, choices=BOOK_TYPE_CHOICES, default='text')  # <-- ✅ default added

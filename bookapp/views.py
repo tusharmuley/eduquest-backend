@@ -5,7 +5,8 @@ from rest_framework import status
 from django.http import JsonResponse
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from .models import Book
-from .utils.pdf_parser import extract_text_from_pdf
+from .utils.pdf_parser import extract_text_from_pdf, extract_text_from_docx
+from .utils.website_parser import extract_text_from_website
 from .utils.text_splitter import split_text
 from .utils.embedder import get_embeddings
 from .utils.qdrant_client import create_collection_if_needed, upsert_chunks, search_in_book
@@ -27,24 +28,34 @@ class UploadUniversalBookView(APIView):
     def post(self, request):
         file = request.data.get("file")
         title = request.data.get("title")
-        subject = request.data.get("subject")  
+        subject = request.data.get("subject")
+        website_url = request.data.get("website_url", "").strip()
 
-        if not file or not title:
-            return Response({"error": "File and title are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not title or (not file and not website_url):
+            return Response({"error": "File/website url and title are required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        extension = os.path.splitext(file.name)[1].lower()
+        extension = os.path.splitext(file.name)[1].lower() if file else None
 
-        if extension in [".pdf"]:
+        if file and extension in [".pdf", ".docx"]:
             book_type = "text"
-        elif extension in [".csv", ".xlsx"]:
+        elif file and extension in [".csv", ".xlsx"]:
             book_type = "structured"
+        elif website_url:
+            book_type = "website"  # Treat websites as text source
         else:
             return Response({"error": "Unsupported file type."}, status=400)
 
-        book = Book.objects.create(title=title, subject=subject, file=file, type=book_type)
+        book = Book.objects.create(title=title, subject=subject, file=file, type=book_type,
+                                   website_url=website_url if website_url else None)
 
         if book_type == "text":
-            text = extract_text_from_pdf(book.file.path)
+            if extension == ".pdf":
+                text = extract_text_from_pdf(book.file.path)
+            elif extension == ".docx":
+                # from .utils.docx_parser import extract_text_from_docx  # or wherever you place it
+                text = extract_text_from_docx(book.file.path)
+        
+            # text = extract_text_from_pdf(book.file.path)
             # Step 2: Save OCR text to file for review/debug
             text_dump_path = f"ocr_output_book_{book.id}.txt"
             with open(text_dump_path, "w", encoding="utf-8") as f:
@@ -84,7 +95,36 @@ class UploadUniversalBookView(APIView):
                         "sheets": list(dfs.keys())
                     })
             except Exception as e:
-                return Response({"error": str(e)}, status=500)  
+                return Response({"error": str(e)}, status=500)
+            
+        elif book_type == "website":
+            try:
+                text = extract_text_from_website(website_url)
+
+                if len(text.strip()) < 50:
+                    return Response({"error": f"Website has too little readable content.text :{text}", }, status=400)
+
+                # Optional: Save scraped text
+                text_dump_path = f"website_output_book_{book.id}.txt"
+                with open(text_dump_path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                print(f"🌐 Website text saved to {text_dump_path}")
+
+                chunks = split_text(text)
+                vectors = get_embeddings(chunks)
+                create_collection_if_needed()
+                upsert_chunks(chunks, vectors, book_id=book.id)
+
+                return Response({
+                    "message": "Website processed and embedded.",
+                    "book_id": book.id,
+                    "type": "website",
+                    "chunks": len(chunks)
+                })
+
+            except Exception as e:
+                return Response({"error": f"Website ingestion failed: {str(e)}"}, status=500)
+            
     
 
     def get(self, request):

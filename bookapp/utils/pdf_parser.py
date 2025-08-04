@@ -3,6 +3,24 @@ from pdf2image import convert_from_path
 import pdfplumber
 from multiprocessing import Pool
 import os
+from docx import Document
+
+
+def extract_text_from_docx(file_path):
+    """
+    Extracts text from a .docx file.
+    """
+    try:
+        doc = Document(file_path)
+        full_text = []
+        for para in doc.paragraphs:
+            if para.text.strip():
+                full_text.append(para.text.strip())
+        return "\n".join(full_text)
+    except Exception as e:
+        print(f"❌ Failed to extract DOCX text: {e}")
+        return ""
+
 
 # ✅ Top-level OCR function for Windows compatibility
 def ocr(img):
