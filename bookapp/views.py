@@ -258,6 +258,8 @@ def build_conversational_prompt(history: list, user_prompt: str, intents: list, 
         base += "Answer metadata-related questions using context below.\n"
     else:
         base += "Answer using only the given context.\n"
+        
+    base += 'Only use the context provided below to answer the user question. If the answer is not found, reply with "Not found in the document."\n\n'
 
     # Add memory history
     for msg in history[-5:]:  # Last 5 turns
