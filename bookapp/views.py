@@ -65,7 +65,8 @@ class UploadUniversalBookView(APIView):
             chunks = split_text(text)
             vectors = get_embeddings(chunks)
             create_collection_if_needed()
-            upsert_chunks(chunks, vectors, book_id=book.id)
+            metadata = {"source": f"PDF: {book.title}"}
+            upsert_chunks(chunks, vectors, book_id=book.id, metadata=metadata)
 
             return Response({
                 "message": "PDF processed and embedded.",
@@ -113,7 +114,9 @@ class UploadUniversalBookView(APIView):
                 chunks = split_text(text)
                 vectors = get_embeddings(chunks)
                 create_collection_if_needed()
-                upsert_chunks(chunks, vectors, book_id=book.id)
+                # For website:
+                metadata = {"source": f"Website: {website_url}"}
+                upsert_chunks(chunks, vectors, book_id=book.id, metadata=metadata)
 
                 return Response({
                     "message": "Website processed and embedded.",
@@ -312,7 +315,19 @@ class SearchInBookView(APIView):
             # 🔍 Vector search
             vector = get_embeddings([prompt])[0]
             results = search_in_book(prompt_vector=vector, book_id=int(book_id), top_k=10)
-            chunks = [hit.payload["text"] for hit in results]
+            # chunks = [hit.payload["text"] for hit in results]
+            chunks = []
+            citations = []
+
+            for hit in results:
+                payload = hit.payload
+                text = payload.get("text", "")
+                chunk_index = payload.get("chunk_index")
+                source = payload.get("source", f"Book {book_id}")
+
+                citation = f"{source}, Chunk {chunk_index}"
+                citations.append(citation)
+                chunks.append(text)
 
             if not chunks:
                 return Response({
@@ -345,7 +360,8 @@ class SearchInBookView(APIView):
             return Response({
                 "answer": answer,
                 "confidence": "high",
-                "matched_chunks": matched_chunks
+                "matched_chunks": matched_chunks,
+                "citations": citations[:len(matched_chunks)],  # Align with top matched
             })
 
         except Exception as e:

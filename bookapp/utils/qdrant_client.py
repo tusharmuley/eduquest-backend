@@ -46,17 +46,21 @@ def create_collection_if_needed(vector_dim=384):
 
 
 
-def upsert_chunks(chunks, vectors, book_id):
+def upsert_chunks(chunks, vectors, book_id, metadata=None):
     points = []
-    for chunk, vec in zip(chunks, vectors):
+    for idx, (chunk, vec) in enumerate(zip(chunks, vectors)):
+        payload={
+                    "text": chunk,
+                    "book_id": int(book_id) , # Ensure it's int, as index requires it
+                    "chunk_index": idx + 1  # ✅ Add this!
+                }
+        if metadata:
+            payload.update(metadata)
         points.append(
             PointStruct(
                 id=str(uuid.uuid4()),
                 vector=vec,
-                payload={
-                    "text": chunk,
-                    "book_id": int(book_id)  # Ensure it's int, as index requires it
-                }
+                payload=payload
             )
         )
     
