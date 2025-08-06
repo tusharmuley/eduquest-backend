@@ -57,10 +57,10 @@ class UploadUniversalBookView(APIView):
         
             # text = extract_text_from_pdf(book.file.path)
             # Step 2: Save OCR text to file for review/debug
-            text_dump_path = f"ocr_output_book_{book.id}.txt"
-            with open(text_dump_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            print(f"📝 Extracted text saved to {text_dump_path}")
+            # text_dump_path = f"ocr_output_book_{book.id}.txt"
+            # with open(text_dump_path, "w", encoding="utf-8") as f:
+            #     f.write(text)
+            # print(f"📝 Extracted text saved to {text_dump_path}")
             
             chunks = split_text(text)
             vectors = get_embeddings(chunks)
