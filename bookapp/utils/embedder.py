@@ -1,13 +1,16 @@
 # utils/embedder.py
 
-from sentence_transformers import SentenceTransformer
+from huggingface_hub import InferenceClient
+from django.conf import settings
 import time
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+client = InferenceClient(model="sentence-transformers/all-MiniLM-L6-v2", token=settings.HF_TOKEN)
 
 def get_embeddings(texts):
-    print("🔁 Generating embeddings in one go (model auto-batches)...")
+    print("🔁 Generating embeddings via Hugging Face API...")
     t = time.time()
-    vectors = model.encode(texts, show_progress_bar=True).tolist()
+    # Batch all texts at once
+    response = client.feature_extraction(texts)
+    vectors = response.tolist() if hasattr(response, 'tolist') else response
     print(f"🧠 Embedding completed in {time.time() - t:.2f} seconds")
     return vectors

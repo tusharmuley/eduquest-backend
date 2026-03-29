@@ -3,3 +3,11 @@ __pycache__/
 *.sqlite3
 media/*
 .env
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# VS Code
+.vscode/

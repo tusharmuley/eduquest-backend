@@ -16,7 +16,7 @@ def generate_answer(prompt: str):
     url = "https://openrouter.ai/api/v1/chat/completions"
 
     data = {
-        "model": "mistralai/mistral-7b-instruct",
+        "model": "openai/gpt-3.5-turbo",
         "messages": [
             {"role": "system", "content": "You are a helpful assistant that answers based on provided text."},
             {"role": "user", "content": prompt}

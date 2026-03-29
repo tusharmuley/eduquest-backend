@@ -14,11 +14,12 @@ import re
 import nltk
 from nltk.tokenize import sent_tokenize
 
-nltk.download('punkt')
-nltk.download('punkt_tab')
+
 
 
 def split_text(text, chunk_size=800, chunk_overlap=100):
+    nltk.download('punkt')
+    nltk.download('punkt_tab')
     """
     Sentence-aware chunking for EduQuest project.
     Keeps context, avoids mid-sentence breaks, and works across PDF, DOCX, and Website content.

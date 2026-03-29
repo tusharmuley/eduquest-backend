@@ -114,13 +114,35 @@ MEDIA_ROOT = BASE_DIR / 'media'
 #     }
 # }
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'eduquest',
+#         'USER': 'postgres',
+#         'PASSWORD': 'admin',
+#         'HOST': 'localhost',
+#         'PORT': '5432',
+#     }
+# }
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'postgres',
+#         'USER': 'postgres.ysoeaznjlmfnacvbuhrv',
+#         'PASSWORD': '85okQLWREATCPx4d',
+#         'HOST': 'aws-1-ap-south-1.pooler.supabase.com',
+#         'PORT': '5432',
+#     }
+# }
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'eduquest',
-        'USER': 'postgres',
-        'PASSWORD': 'admin',
-        'HOST': 'localhost',
+        'NAME': 'postgres',
+        'USER': 'postgres.ysoeaznjlmfnacvbuhrv',
+        'PASSWORD': '85okQLWREATCPx4d',
+        'HOST': 'aws-1-ap-south-1.pooler.supabase.com',
         'PORT': '5432',
     }
 }
@@ -179,6 +201,7 @@ env = environ.Env()
 environ.Env.read_env(os.path.join(BASE_DIR, '.env'))
 
 OPENROUTER_API_KEY = env("OPENROUTER_API_KEY")
+HF_TOKEN = env("HF_TOKEN")
 
 
 

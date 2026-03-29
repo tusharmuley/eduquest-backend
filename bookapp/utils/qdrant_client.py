@@ -1,59 +1,84 @@
 import uuid
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    PointStruct,
-    Distance,
-    VectorParams,
-    Filter,
-    FieldCondition,
-    MatchValue,
-    PayloadSchemaType
-)
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+import pickle
+import os
 
-# Qdrant config
-client = QdrantClient(
-    url="https://417d4a71-3bc9-40e3-889b-edfddc81b2ca.us-west-1-0.aws.cloud.qdrant.io",
-    api_key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.9zo8QJRj1TZXuGlJF76Y_kTVXOD0O57_AXYdA9fZzco"
-)
+# In-memory vector store
+class InMemoryVectorStore:
+    def __init__(self, persist_file="vector_store.pkl"):
+        self.persist_file = persist_file
+        self.data = []  # List of dicts: {'id': str, 'vector': np.array, 'payload': dict}
+        self.load()
 
-COLLECTION_NAME = "books"
+    def load(self):
+        if os.path.exists(self.persist_file):
+            with open(self.persist_file, 'rb') as f:
+                self.data = pickle.load(f)
+            print(f"📂 Loaded {len(self.data)} vectors from {self.persist_file}")
 
+    def save(self):
+        with open(self.persist_file, 'wb') as f:
+            pickle.dump(self.data, f)
+        print(f"💾 Saved {len(self.data)} vectors to {self.persist_file}")
+
+    def upsert(self, points):
+        for point in points:
+            self.data.append({
+                'id': point.id,
+                'vector': np.array(point.vector),
+                'payload': point.payload
+            })
+        self.save()
+
+    def search(self, query_vector, filter_func=None, limit=5):
+        if not self.data:
+            return []
+        
+        vectors = np.array([d['vector'] for d in self.data])
+        query_vec = np.array(query_vector).reshape(1, -1)
+        similarities = cosine_similarity(query_vec, vectors)[0]
+        
+        # Get indices sorted by similarity (descending)
+        sorted_indices = np.argsort(similarities)[::-1]
+        
+        results = []
+        for idx in sorted_indices:
+            if filter_func and not filter_func(self.data[idx]['payload']):
+                continue
+            results.append({
+                'id': self.data[idx]['id'],
+                'score': similarities[idx],
+                'payload': self.data[idx]['payload']
+            })
+            if len(results) >= limit:
+                break
+        return results
+
+# Mock PointStruct for compatibility
+class PointStruct:
+    def __init__(self, id, vector, payload):
+        self.id = id
+        self.vector = vector
+        self.payload = payload
+
+# Global store instance
+store = InMemoryVectorStore()
+
+COLLECTION_NAME = "books"  # Not needed, but keep for compatibility
 
 def create_collection_if_needed(vector_dim=384):
-    existing_collections = [c.name for c in client.get_collections().collections]
-    if COLLECTION_NAME not in existing_collections:
-        print("🆕 Creating Qdrant collection and index...")
-        client.recreate_collection(
-            collection_name=COLLECTION_NAME,
-            vectors_config=VectorParams(
-                size=vector_dim,
-                distance=Distance.COSINE
-            )
-        )
-
-    # ✅ Always try to create index if not present
-    try:
-        index_info = client.get_collection(collection_name=COLLECTION_NAME).payload_schema
-        if "book_id" not in index_info:
-            print("🔧 Creating payload index on book_id...")
-            client.create_payload_index(
-                collection_name=COLLECTION_NAME,
-                field_name="book_id",
-                field_schema=PayloadSchemaType.INTEGER
-            )
-    except Exception as e:
-        print("⚠️ Could not check/create payload index:", e)
-
-
+    # No-op for in-memory
+    print("🆕 In-memory vector store ready (no collection needed)")
 
 def upsert_chunks(chunks, vectors, book_id, metadata=None):
     points = []
     for idx, (chunk, vec) in enumerate(zip(chunks, vectors)):
-        payload={
-                    "text": chunk,
-                    "book_id": int(book_id) , # Ensure it's int, as index requires it
-                    "chunk_index": idx + 1  # ✅ Add this!
-                }
+        payload = {
+            "text": chunk,
+            "book_id": int(book_id),
+            "chunk_index": idx + 1
+        }
         if metadata:
             payload.update(metadata)
         points.append(
@@ -68,24 +93,20 @@ def upsert_chunks(chunks, vectors, book_id, metadata=None):
         print("⚠️ No chunks to insert.")
         return
 
-    client.upsert(
-        collection_name=COLLECTION_NAME,
-        points=points
-    )
-
+    store.upsert(points)
+    print(f"✅ Inserted {len(points)} chunks into in-memory store")
 
 def search_in_book(prompt_vector, book_id: int, top_k=5):
-    return client.search(
-        collection_name=COLLECTION_NAME,
-        query_vector=prompt_vector,
-        limit=top_k,
-        with_payload=True,
-        query_filter=Filter(
-            must=[
-                FieldCondition(
-                    key="book_id",
-                    match=MatchValue(value=book_id)
-                )
-            ]
-        )
-    )
+    def filter_func(payload):
+        return payload.get('book_id') == book_id
+    
+    results = store.search(prompt_vector, filter_func=filter_func, limit=top_k)
+    # Format to match Qdrant's output
+    return [
+        {
+            'id': r['id'],
+            'score': r['score'],
+            'payload': r['payload']
+        }
+        for r in results
+    ]
